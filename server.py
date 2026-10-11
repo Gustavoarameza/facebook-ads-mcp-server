@@ -2311,19 +2311,26 @@ if __name__ == "__main__":
     import os
     import uvicorn
     from starlette.middleware.cors import CORSMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
     porta_render = int(os.environ.get('PORT', 10000))
     config_original = uvicorn.Config
 
     class ConfigPublica(config_original):
         def __init__(self, app, *args, **kwargs):
-            # Envolve o servidor com a permissão CORS para o Gemini poder aceder
+            # 1. Permite que o painel do Gemini comunique com o servidor
             app_liberado = CORSMiddleware(
                 app=app,
                 allow_origins=["*"],
                 allow_credentials=True,
                 allow_methods=["*"],
                 allow_headers=["*"],
+            )
+            
+            # 2. Desativa a rejeição do "Invalid Host header", permitindo o domínio do Render
+            app_liberado = TrustedHostMiddleware(
+                app=app_liberado, 
+                allowed_hosts=["*"]
             )
             
             kwargs['host'] = '0.0.0.0'
