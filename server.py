@@ -2313,26 +2313,31 @@ if __name__ == "__main__":
 
     porta_render = int(os.environ.get('PORT', 10000))
 
-    # 1. A CHAVE MESTRA: Extraímos a aplicação pura para Produção (evitando o "mcp.run" restrito)
-    if hasattr(mcp, "get_asgi_app"):
+    # 1. A CHAVE MESTRA: Extraímos a aplicação pura com o nome correto da sua versão!
+    if hasattr(mcp, "http_app"):
+        app_base = mcp.http_app()
+    elif hasattr(mcp, "streamable_http_app"):
+        app_base = mcp.streamable_http_app()
+    elif hasattr(mcp, "get_asgi_app"):
         app_base = mcp.get_asgi_app()
     else:
-        app_base = mcp
+        # Tenta aceder à variável oculta onde o FastMCP guarda a aplicação
+        app_base = getattr(mcp, "_app", mcp)
 
-    # 2. O nosso "Fantasma ASGI" para alterar o bilhete de identidade da ligação
+    # 2. O nosso Fantasma que mantém as portas do CORS abertas ao Google
     class FantasmaASGI:
         def __init__(self, app):
             self.app = app
 
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http":
-                # Falsifica o 'Host' para passar pelas camadas mais profundas da biblioteca
+                # Falsifica o cabeçalho para passar nas camadas mais profundas
                 headers = dict(scope.get("headers", []))
                 headers[b"host"] = b"127.0.0.1"
                 headers.pop(b"x-forwarded-host", None)
                 scope["headers"] = [(k, v) for k, v in headers.items()]
 
-                # Liberta as permissões para o Gemini (CORS)
+                # Adiciona o passaporte de livre-trânsito para o Gemini
                 async def send_modificado(message):
                     if message["type"] == "http.response.start":
                         msg_headers = dict(message.get("headers", []))
@@ -2342,6 +2347,7 @@ if __name__ == "__main__":
                         message["headers"] = [(k, v) for k, v in msg_headers.items()]
                     await send(message)
 
+                # Executa a aplicação real (já não vai dar TypeError)
                 await self.app(scope, receive, send_modificado)
                 return
 
@@ -2349,5 +2355,5 @@ if __name__ == "__main__":
 
     app_publica = FantasmaASGI(app_base)
 
-    # 3. Ligamos o servidor de forma limpa, direta e 100% aberta na internet!
+    # 3. Arrancamos o motor Uvicorn a todo o gás
     uvicorn.run(app_publica, host="0.0.0.0", port=porta_render)
