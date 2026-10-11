@@ -2310,17 +2310,19 @@ def get_activities_by_adset(
 if __name__ == "__main__":
     import os
     import uvicorn
-    
-    # Intercepta o motor do servidor para forçar o endereço público (0.0.0.0)
+
+    # Força a configuração raiz do motor web a usar a porta pública do Render
     porta_render = int(os.environ.get('PORT', 10000))
-    original_run = uvicorn.run
-    
-    def run_publico(*args, **kwargs):
-        kwargs['host'] = '0.0.0.0'
-        kwargs['port'] = porta_render
-        original_run(*args, **kwargs)
-        
-    uvicorn.run = run_publico
-    
-    # Inicia o servidor com a nossa regra forçada
+    config_original = uvicorn.Config
+
+    class ConfigPublica(config_original):
+        def __init__(self, *args, **kwargs):
+            kwargs['host'] = '0.0.0.0'
+            kwargs['port'] = porta_render
+            super().__init__(*args, **kwargs)
+
+    # Substitui a configuração original pela nossa forçada
+    uvicorn.Config = ConfigPublica
+
+    # Inicia o servidor
     mcp.run(transport='sse')
