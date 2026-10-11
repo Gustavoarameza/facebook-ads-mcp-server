@@ -2310,18 +2310,27 @@ def get_activities_by_adset(
 if __name__ == "__main__":
     import os
     import uvicorn
+    from starlette.middleware.cors import CORSMiddleware
 
     porta_render = int(os.environ.get('PORT', 10000))
     config_original = uvicorn.Config
 
     class ConfigPublica(config_original):
-        def __init__(self, *args, **kwargs):
+        def __init__(self, app, *args, **kwargs):
+            # Envolve o servidor com a permissão CORS para o Gemini poder aceder
+            app_liberado = CORSMiddleware(
+                app=app,
+                allow_origins=["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+            
             kwargs['host'] = '0.0.0.0'
             kwargs['port'] = porta_render
-            # As duas linhas mágicas que avisam o servidor sobre o escudo HTTPS do Render:
             kwargs['proxy_headers'] = True
             kwargs['forwarded_allow_ips'] = '*'
-            super().__init__(*args, **kwargs)
+            super().__init__(app_liberado, *args, **kwargs)
 
     uvicorn.Config = ConfigPublica
     mcp.run(transport='sse')
