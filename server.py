@@ -2310,47 +2310,58 @@ def get_activities_by_adset(
 if __name__ == "__main__":
     import os
     import uvicorn
-    from starlette.middleware import Middleware
-    from starlette.middleware.cors import CORSMiddleware
 
     porta_render = int(os.environ.get('PORT', 10000))
-
-    # 1. Guardamos os motores de construção originais do Uvicorn
     original_config_init = uvicorn.Config.__init__
-    original_config_load = uvicorn.Config.load
 
-    # 2. Intercetamos a planta-base: forçamos a porta pública 0.0.0.0
-    def config_init_modificado(self, *args, **kwargs):
+    # 1. O Fantasma Invisível: Engana a segurança interna e escancara o CORS
+    class FantasmaASGI:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                # Altera a etiqueta de entrada para a biblioteca pensar que o Google é o "localhost"
+                headers = dict(scope.get("headers", []))
+                headers[b"host"] = b"127.0.0.1"
+                headers.pop(b"x-forwarded-host", None)
+                scope["headers"] = [(k, v) for k, v in headers.items()]
+
+                # Interceta a saída para garantir acesso total ao Gemini
+                async def send_modificado(message):
+                    if message["type"] == "http.response.start":
+                        msg_headers = dict(message.get("headers", []))
+                        msg_headers[b"access-control-allow-origin"] = b"*"
+                        msg_headers[b"access-control-allow-methods"] = b"*"
+                        msg_headers[b"access-control-allow-headers"] = b"*"
+                        message["headers"] = [(k, v) for k, v in msg_headers.items()]
+                    await send(message)
+
+                await self.app(scope, receive, send_modificado)
+                return
+
+            await self.app(scope, receive, send)
+
+    # 2. Interceção no EXATO Coração do Uvicorn
+    def config_init_modificado(self, app, *args, **kwargs):
+        # Obriga o servidor a ouvir na internet pública do Render
         kwargs["host"] = "0.0.0.0"
         kwargs["port"] = porta_render
         kwargs["proxy_headers"] = True
         kwargs["forwarded_allow_ips"] = "*"
-        original_config_init(self, *args, **kwargs)
+        
+        # Embrulha IMEDIATAMENTE a aplicação da biblioteca no nosso Fantasma
+        app_fantasma = FantasmaASGI(app)
+        
+        original_config_init(self, app_fantasma, *args, **kwargs)
+        
+        # Trava de segurança dupla para garantir que a nossa app é a que corre
+        self.loaded_app = app_fantasma
 
-    # 3. Intercetamos o carregamento da aplicação: removemos o cadeado e abrimos ao Google
-    def config_load_modificado(self):
-        original_config_load(self)
-        app = self.loaded_app
-        if hasattr(app, "user_middleware"):
-            # Arranca fora o bloqueio "Invalid Host header"
-            app.user_middleware = [m for m in app.user_middleware if "TrustedHost" not in str(m.cls)]
-            
-            # Escancara a porta CORS para o Gemini
-            app.user_middleware.insert(0, Middleware(
-                CORSMiddleware,
-                allow_origins=["*"],
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"]
-            ))
-            
-            # Reconstrói a aplicação com as novas regras de liberdade
-            if hasattr(app, "build_middleware_stack"):
-                app.middleware_stack = app.build_middleware_stack()
-
-    # 4. Substituímos as peças originais pelas nossas peças "artilhadas"
+    # 3. Substitui o motor e arranca o servidor (a biblioteca cai na armadilha instantaneamente)
     uvicorn.Config.__init__ = config_init_modificado
-    uvicorn.Config.load = config_load_modificado
+    
+    mcp.run(transport='sse')
 
     # 5. Iniciamos o FastMCP (que não fará ideia de que o Uvicorn foi hackeado por nós)
     mcp.run(transport='sse')
