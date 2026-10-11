@@ -2312,24 +2312,23 @@ if __name__ == "__main__":
     import uvicorn
 
     porta_render = int(os.environ.get('PORT', 10000))
-    original_run = uvicorn.run
+    config_original = uvicorn.Config
 
-    # O "Fantasma" que falsifica a origem e corrige as respostas na saída
+    # O nosso "Fantasma" que falsifica a segurança e liberta o acesso ao Gemini
     class FantasmaASGI:
         def __init__(self, app):
             self.app = app
 
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http":
-                # 1. Falsifica a entrada: diz à biblioteca que somos o "localhost"
+                # 1. Falsifica a entrada: diz à biblioteca que somos nós próprios (localhost)
                 headers = dict(scope.get("headers", []))
                 headers[b"host"] = b"127.0.0.1"
-                headers.pop(b"x-forwarded-host", None) # Apaga rastos do Render
+                headers.pop(b"x-forwarded-host", None)
                 scope["headers"] = [(k, v) for k, v in headers.items()]
 
-                # 2. Interceta a saída para o Gemini
                 async def send_modificado(message):
-                    # Força a libertação dos portões CORS para o Google
+                    # 2. Escancara os portões de segurança CORS para o Google
                     if message["type"] == "http.response.start":
                         msg_headers = dict(message.get("headers", []))
                         msg_headers[b"access-control-allow-origin"] = b"*"
@@ -2337,10 +2336,11 @@ if __name__ == "__main__":
                         msg_headers[b"access-control-allow-headers"] = b"*"
                         message["headers"] = [(k, v) for k, v in msg_headers.items()]
                     
-                    # Se o servidor enviar uma URL local, nós reescrevemos para a pública do Render!
+                    # 3. Reescreve os links de saída locais para os públicos do Render
                     if message["type"] == "http.response.body" and "body" in message:
                         corpo = message["body"]
                         corpo = corpo.replace(b"127.0.0.1:10000", b"mcp-skill-meta.onrender.com")
+                        corpo = corpo.replace(b"127.0.0.1:8000", b"mcp-skill-meta.onrender.com")
                         corpo = corpo.replace(b"127.0.0.1", b"mcp-skill-meta.onrender.com")
                         corpo = corpo.replace(b"http://mcp-skill-meta", b"https://mcp-skill-meta")
                         message["body"] = corpo
@@ -2352,14 +2352,21 @@ if __name__ == "__main__":
 
             await self.app(scope, receive, send)
 
-    def run_publico(app, *args, **kwargs):
-        kwargs['host'] = '0.0.0.0'
-        kwargs['port'] = porta_render
-        kwargs['proxy_headers'] = False # Impede que o servidor tente adivinhar IPs
-        kwargs.pop('forwarded_allow_ips', None)
-        
-        # Envolve o servidor inteiro no nosso Fantasma
-        original_run(FantasmaASGI(app), *args, **kwargs)
+    # A armadilha perfeita: força a porta do Render e injeta o Fantasma no carregamento
+    class ConfigPublica(config_original):
+        def __init__(self, *args, **kwargs):
+            kwargs['host'] = '0.0.0.0'
+            kwargs['port'] = porta_render
+            kwargs['proxy_headers'] = True
+            kwargs['forwarded_allow_ips'] = '*'
+            super().__init__(*args, **kwargs)
+            
+        def load(self):
+            # No exato momento em que o servidor carrega, nós embrulhamos tudo com o Fantasma
+            app_original = super().load()
+            return FantasmaASGI(app_original)
 
-    uvicorn.run = run_publico
+    uvicorn.Config = ConfigPublica
+    
+    # Inicia o servidor naturalmente
     mcp.run(transport='sse')
