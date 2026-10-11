@@ -2310,28 +2310,56 @@ def get_activities_by_adset(
 if __name__ == "__main__":
     import os
     import uvicorn
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-    # 1. O HACK SUPREMO: Neutraliza a fechadura do "Invalid Host header"
-    async def bypass_host_check(self, scope, receive, send):
-        # Em vez de bloquear, manda a ligação passar direto
-        await self.app(scope, receive, send)
-        
-    TrustedHostMiddleware.__call__ = bypass_host_check
-
-    # 2. Força o servidor a abrir-se para a internet na porta correta
     porta_render = int(os.environ.get('PORT', 10000))
-    config_original = uvicorn.Config
+    original_run = uvicorn.run
 
-    class ConfigPublica(config_original):
-        def __init__(self, *args, **kwargs):
-            kwargs['host'] = '0.0.0.0'
-            kwargs['port'] = porta_render
-            kwargs['proxy_headers'] = True
-            kwargs['forwarded_allow_ips'] = '*'
-            super().__init__(*args, **kwargs)
+    # O "Fantasma" que falsifica a origem e corrige as respostas na saída
+    class FantasmaASGI:
+        def __init__(self, app):
+            self.app = app
 
-    uvicorn.Config = ConfigPublica
-    
-    # 3. Inicia o servidor (agora totalmente domado)
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                # 1. Falsifica a entrada: diz à biblioteca que somos o "localhost"
+                headers = dict(scope.get("headers", []))
+                headers[b"host"] = b"127.0.0.1"
+                headers.pop(b"x-forwarded-host", None) # Apaga rastos do Render
+                scope["headers"] = [(k, v) for k, v in headers.items()]
+
+                # 2. Interceta a saída para o Gemini
+                async def send_modificado(message):
+                    # Força a libertação dos portões CORS para o Google
+                    if message["type"] == "http.response.start":
+                        msg_headers = dict(message.get("headers", []))
+                        msg_headers[b"access-control-allow-origin"] = b"*"
+                        msg_headers[b"access-control-allow-methods"] = b"*"
+                        msg_headers[b"access-control-allow-headers"] = b"*"
+                        message["headers"] = [(k, v) for k, v in msg_headers.items()]
+                    
+                    # Se o servidor enviar uma URL local, nós reescrevemos para a pública do Render!
+                    if message["type"] == "http.response.body" and "body" in message:
+                        corpo = message["body"]
+                        corpo = corpo.replace(b"127.0.0.1:10000", b"mcp-skill-meta.onrender.com")
+                        corpo = corpo.replace(b"127.0.0.1", b"mcp-skill-meta.onrender.com")
+                        corpo = corpo.replace(b"http://mcp-skill-meta", b"https://mcp-skill-meta")
+                        message["body"] = corpo
+                        
+                    await send(message)
+
+                await self.app(scope, receive, send_modificado)
+                return
+
+            await self.app(scope, receive, send)
+
+    def run_publico(app, *args, **kwargs):
+        kwargs['host'] = '0.0.0.0'
+        kwargs['port'] = porta_render
+        kwargs['proxy_headers'] = False # Impede que o servidor tente adivinhar IPs
+        kwargs.pop('forwarded_allow_ips', None)
+        
+        # Envolve o servidor inteiro no nosso Fantasma
+        original_run(FantasmaASGI(app), *args, **kwargs)
+
+    uvicorn.run = run_publico
     mcp.run(transport='sse')
