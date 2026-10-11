@@ -2308,5 +2308,19 @@ def get_activities_by_adset(
 
 
 if __name__ == "__main__":
-    mcp.run(transport='sse')
+    import os
+    import uvicorn
     
+    # Intercepta o motor do servidor para forçar o endereço público (0.0.0.0)
+    porta_render = int(os.environ.get('PORT', 10000))
+    original_run = uvicorn.run
+    
+    def run_publico(*args, **kwargs):
+        kwargs['host'] = '0.0.0.0'
+        kwargs['port'] = porta_render
+        original_run(*args, **kwargs)
+        
+    uvicorn.run = run_publico
+    
+    # Inicia o servidor com a nossa regra forçada
+    mcp.run(transport='sse')
