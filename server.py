@@ -5,8 +5,7 @@ from typing import Dict, List, Optional, Any
 import json
 import requests
 import sys
-from urllib.parse import urlsplit
-
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
     
 
 # --- Constants ---
@@ -42,6 +41,19 @@ def _redact_token(text: str, token: Optional[str]) -> str:
         text = text.replace(token, "***REDACTED***")
     return text
 
+def _strip_token_from_url(u: str) -> str:
+    p = urlsplit(u)
+    q = [(k, v) for k, v in parse_qsl(p.query) if k != "access_token"]
+    return urlunsplit((p.scheme, p.netloc, p.path, urlencode(q), p.fragment))
+
+
+def _sanitize_paging(data):
+    if isinstance(data, dict) and isinstance(data.get("paging"), dict):
+        for k in ("next", "previous"):
+            if k in data["paging"]:
+                data["paging"][k] = _strip_token_from_url(data["paging"][k])
+    return data
+
 
 def _make_graph_api_call(url: str, params: Dict[str, Any]) -> Dict:
     """Makes a GET request to the Facebook Graph API and handles the response."""
@@ -49,7 +61,7 @@ def _make_graph_api_call(url: str, params: Dict[str, Any]) -> Dict:
     try:
         response = requests.get(url, params=params)
         response.raise_for_status()  # Raises HTTPError for bad responses (4xx or 5xx)
-        return response.json()
+        return _sanitize_paging(response.json())
     except requests.exceptions.RequestException as e:
         # Never log/raise the raw params or exception: both the params dict and
         # requests' own HTTPError message (which embeds the full request URL,
@@ -830,9 +842,14 @@ def fetch_pagination_url(url: str) -> Dict:
             "Pagination URL must use HTTPS and target graph.facebook.com"
         )
 
-    response = requests.get(url, allow_redirects=False, timeout=30)
+    response = requests.get(
+        url,
+        params={"access_token": _get_fb_access_token()},
+        allow_redirects=False,
+        timeout=30,
+    )
     response.raise_for_status()
-    return response.json()
+    return _sanitize_paging(response.json())                                          
 
 
 # --- Ad Creative Tools ---
