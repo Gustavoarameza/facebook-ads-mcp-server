@@ -2313,20 +2313,29 @@ if __name__ == "__main__":
     from starlette.middleware import Middleware
     from starlette.middleware.cors import CORSMiddleware
 
-    # 1. Guardamos a função original que liga o servidor
-    original_run = uvicorn.run
+    porta_render = int(os.environ.get('PORT', 10000))
 
-    # 2. Criamos o nosso "intercetor" cirúrgico
-    def run_publico(app, **kwargs):
-        # 'app' é a aplicação Starlette que o FastMCP cria escondida.
+    # 1. Guardamos os motores de construção originais do Uvicorn
+    original_config_init = uvicorn.Config.__init__
+    original_config_load = uvicorn.Config.load
+
+    # 2. Intercetamos a planta-base: forçamos a porta pública 0.0.0.0
+    def config_init_modificado(self, *args, **kwargs):
+        kwargs["host"] = "0.0.0.0"
+        kwargs["port"] = porta_render
+        kwargs["proxy_headers"] = True
+        kwargs["forwarded_allow_ips"] = "*"
+        original_config_init(self, *args, **kwargs)
+
+    # 3. Intercetamos o carregamento da aplicação: removemos o cadeado e abrimos ao Google
+    def config_load_modificado(self):
+        original_config_load(self)
+        app = self.loaded_app
         if hasattr(app, "user_middleware"):
-            # Removemos o infame cadeado que causa o "Invalid Host header"
-            app.user_middleware = [
-                m for m in app.user_middleware 
-                if "TrustedHost" not in str(m.cls)
-            ]
+            # Arranca fora o bloqueio "Invalid Host header"
+            app.user_middleware = [m for m in app.user_middleware if "TrustedHost" not in str(m.cls)]
             
-            # Adicionamos a permissão oficial (CORS) para o Gemini
+            # Escancara a porta CORS para o Gemini
             app.user_middleware.insert(0, Middleware(
                 CORSMiddleware,
                 allow_origins=["*"],
@@ -2335,19 +2344,13 @@ if __name__ == "__main__":
                 allow_headers=["*"]
             ))
             
-            # Reconstruímos o motor interno da aplicação com as novas regras
+            # Reconstrói a aplicação com as novas regras de liberdade
             if hasattr(app, "build_middleware_stack"):
                 app.middleware_stack = app.build_middleware_stack()
 
-        # Forçamos as configurações de porta pública do Render
-        kwargs["host"] = "0.0.0.0"
-        kwargs["port"] = int(os.environ.get("PORT", 10000))
+    # 4. Substituímos as peças originais pelas nossas peças "artilhadas"
+    uvicorn.Config.__init__ = config_init_modificado
+    uvicorn.Config.load = config_load_modificado
 
-        # Arrancamos o servidor com a app destrancada
-        original_run(app, **kwargs)
-
-    # 3. Aplicamos a armadilha
-    uvicorn.run = run_publico
-    
-    # 4. Disparamos o servidor (o FastMCP vai cair na nossa armadilha de interceção)
+    # 5. Iniciamos o FastMCP (que não fará ideia de que o Uvicorn foi hackeado por nós)
     mcp.run(transport='sse')
