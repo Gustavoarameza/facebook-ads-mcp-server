@@ -28,29 +28,12 @@ FB_ACCESS_TOKEN = None
 # --- Helper Functions ---
 
 def _get_fb_access_token() -> str:
-    """
-    Get Facebook access token from command line arguments.
-    Caches the token in memory after first read.
-
-    Returns:
-        str: The Facebook access token.
-
-    Raises:
-        Exception: If no token is provided in command line arguments.
-    """
+    import os
     global FB_ACCESS_TOKEN
     if FB_ACCESS_TOKEN is None:
-        # Look for --fb-token argument
-        if "--fb-token" in sys.argv:
-            token_index = sys.argv.index("--fb-token") + 1
-            if token_index < len(sys.argv):
-                FB_ACCESS_TOKEN = sys.argv[token_index]
-                print(f"Using Facebook token from command line arguments")
-            else:
-                raise Exception("--fb-token argument provided but no token value followed it")
-        else:
-            raise Exception("Facebook token must be provided via '--fb-token' command line argument")
-
+        FB_ACCESS_TOKEN = os.environ.get("FB_ACCESS_TOKEN")
+        if not FB_ACCESS_TOKEN:
+            raise Exception("Token ausente! Configure a variavel FB_ACCESS_TOKEN no Render.")
     return FB_ACCESS_TOKEN
 
 def _redact_token(text: str, token: Optional[str]) -> str:
@@ -2325,5 +2308,6 @@ def get_activities_by_adset(
 
 
 if __name__ == "__main__":
-    _get_fb_access_token()
-    mcp.run(transport='stdio')
+    import os
+    port = int(os.environ.get('PORT', 8080))
+    mcp.run(transport='sse', host='0.0.0.0', port=port)
