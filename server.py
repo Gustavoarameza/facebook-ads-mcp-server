@@ -2311,7 +2311,6 @@ if __name__ == "__main__":
     import os
     import uvicorn
 
-    # Força a configuração raiz do motor web a usar a porta pública do Render
     porta_render = int(os.environ.get('PORT', 10000))
     config_original = uvicorn.Config
 
@@ -2319,10 +2318,10 @@ if __name__ == "__main__":
         def __init__(self, *args, **kwargs):
             kwargs['host'] = '0.0.0.0'
             kwargs['port'] = porta_render
+            # As duas linhas mágicas que avisam o servidor sobre o escudo HTTPS do Render:
+            kwargs['proxy_headers'] = True
+            kwargs['forwarded_allow_ips'] = '*'
             super().__init__(*args, **kwargs)
 
-    # Substitui a configuração original pela nossa forçada
     uvicorn.Config = ConfigPublica
-
-    # Inicia o servidor
     mcp.run(transport='sse')
