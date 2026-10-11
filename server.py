@@ -2312,22 +2312,27 @@ if __name__ == "__main__":
     import uvicorn
 
     porta_render = int(os.environ.get('PORT', 10000))
-    original_config_init = uvicorn.Config.__init__
 
-    # 1. O Fantasma Invisível: Engana a segurança interna e escancara o CORS
+    # 1. A CHAVE MESTRA: Extraímos a aplicação pura para Produção (evitando o "mcp.run" restrito)
+    if hasattr(mcp, "get_asgi_app"):
+        app_base = mcp.get_asgi_app()
+    else:
+        app_base = mcp
+
+    # 2. O nosso "Fantasma ASGI" para alterar o bilhete de identidade da ligação
     class FantasmaASGI:
         def __init__(self, app):
             self.app = app
 
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http":
-                # Altera a etiqueta de entrada para a biblioteca pensar que o Google é o "localhost"
+                # Falsifica o 'Host' para passar pelas camadas mais profundas da biblioteca
                 headers = dict(scope.get("headers", []))
                 headers[b"host"] = b"127.0.0.1"
                 headers.pop(b"x-forwarded-host", None)
                 scope["headers"] = [(k, v) for k, v in headers.items()]
 
-                # Interceta a saída para garantir acesso total ao Gemini
+                # Liberta as permissões para o Gemini (CORS)
                 async def send_modificado(message):
                     if message["type"] == "http.response.start":
                         msg_headers = dict(message.get("headers", []))
@@ -2342,26 +2347,7 @@ if __name__ == "__main__":
 
             await self.app(scope, receive, send)
 
-    # 2. Interceção no EXATO Coração do Uvicorn
-    def config_init_modificado(self, app, *args, **kwargs):
-        # Obriga o servidor a ouvir na internet pública do Render
-        kwargs["host"] = "0.0.0.0"
-        kwargs["port"] = porta_render
-        kwargs["proxy_headers"] = True
-        kwargs["forwarded_allow_ips"] = "*"
-        
-        # Embrulha IMEDIATAMENTE a aplicação da biblioteca no nosso Fantasma
-        app_fantasma = FantasmaASGI(app)
-        
-        original_config_init(self, app_fantasma, *args, **kwargs)
-        
-        # Trava de segurança dupla para garantir que a nossa app é a que corre
-        self.loaded_app = app_fantasma
+    app_publica = FantasmaASGI(app_base)
 
-    # 3. Substitui o motor e arranca o servidor (a biblioteca cai na armadilha instantaneamente)
-    uvicorn.Config.__init__ = config_init_modificado
-    
-    mcp.run(transport='sse')
-
-    # 5. Iniciamos o FastMCP (que não fará ideia de que o Uvicorn foi hackeado por nós)
-    mcp.run(transport='sse')
+    # 3. Ligamos o servidor de forma limpa, direta e 100% aberta na internet!
+    uvicorn.run(app_publica, host="0.0.0.0", port=porta_render)
