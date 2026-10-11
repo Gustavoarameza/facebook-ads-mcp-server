@@ -2309,8 +2309,45 @@ def get_activities_by_adset(
 
 if __name__ == "__main__":
     import os
+    import uvicorn
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
+
+    # 1. Guardamos a função original que liga o servidor
+    original_run = uvicorn.run
+
+    # 2. Criamos o nosso "intercetor" cirúrgico
+    def run_publico(app, **kwargs):
+        # 'app' é a aplicação Starlette que o FastMCP cria escondida.
+        if hasattr(app, "user_middleware"):
+            # Removemos o infame cadeado que causa o "Invalid Host header"
+            app.user_middleware = [
+                m for m in app.user_middleware 
+                if "TrustedHost" not in str(m.cls)
+            ]
+            
+            # Adicionamos a permissão oficial (CORS) para o Gemini
+            app.user_middleware.insert(0, Middleware(
+                CORSMiddleware,
+                allow_origins=["*"],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"]
+            ))
+            
+            # Reconstruímos o motor interno da aplicação com as novas regras
+            if hasattr(app, "build_middleware_stack"):
+                app.middleware_stack = app.build_middleware_stack()
+
+        # Forçamos as configurações de porta pública do Render
+        kwargs["host"] = "0.0.0.0"
+        kwargs["port"] = int(os.environ.get("PORT", 10000))
+
+        # Arrancamos o servidor com a app destrancada
+        original_run(app, **kwargs)
+
+    # 3. Aplicamos a armadilha
+    uvicorn.run = run_publico
     
-    porta_render = int(os.environ.get('PORT', 10000))
-    
-    # A forma oficial e direta de abrir o servidor para a internet e desativar o bloqueio local
-    mcp.run(transport='sse', host='0.0.0.0', port=porta_render)
+    # 4. Disparamos o servidor (o FastMCP vai cair na nossa armadilha de interceção)
+    mcp.run(transport='sse')
