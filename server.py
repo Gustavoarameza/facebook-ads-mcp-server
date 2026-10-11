@@ -2349,7 +2349,7 @@ if __name__ == "__main__":
         async def __call__(self, scope, receive, send):
             if scope["type"] == "http":
                 headers = dict(scope.get("headers", []))
-                headers[b"host"] = b"127.0.0.1"
+                headers[b"host"] = b"127.0.0.1:10000"
                 scope["headers"] = [(k, v) for k, v in headers.items()]
             await self.app(scope, receive, send)
 
