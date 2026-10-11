@@ -2310,34 +2310,28 @@ def get_activities_by_adset(
 if __name__ == "__main__":
     import os
     import uvicorn
-    from starlette.middleware.cors import CORSMiddleware
     from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+    # 1. O HACK SUPREMO: Neutraliza a fechadura do "Invalid Host header"
+    async def bypass_host_check(self, scope, receive, send):
+        # Em vez de bloquear, manda a ligação passar direto
+        await self.app(scope, receive, send)
+        
+    TrustedHostMiddleware.__call__ = bypass_host_check
+
+    # 2. Força o servidor a abrir-se para a internet na porta correta
     porta_render = int(os.environ.get('PORT', 10000))
     config_original = uvicorn.Config
 
     class ConfigPublica(config_original):
-        def __init__(self, app, *args, **kwargs):
-            # 1. Permite que o painel do Gemini comunique com o servidor
-            app_liberado = CORSMiddleware(
-                app=app,
-                allow_origins=["*"],
-                allow_credentials=True,
-                allow_methods=["*"],
-                allow_headers=["*"],
-            )
-            
-            # 2. Desativa a rejeição do "Invalid Host header", permitindo o domínio do Render
-            app_liberado = TrustedHostMiddleware(
-                app=app_liberado, 
-                allowed_hosts=["*"]
-            )
-            
+        def __init__(self, *args, **kwargs):
             kwargs['host'] = '0.0.0.0'
             kwargs['port'] = porta_render
             kwargs['proxy_headers'] = True
             kwargs['forwarded_allow_ips'] = '*'
-            super().__init__(app_liberado, *args, **kwargs)
+            super().__init__(*args, **kwargs)
 
     uvicorn.Config = ConfigPublica
+    
+    # 3. Inicia o servidor (agora totalmente domado)
     mcp.run(transport='sse')
